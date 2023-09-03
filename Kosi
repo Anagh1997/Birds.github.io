@@ -1,0 +1,128 @@
+var geometry = ee.FeatureCollection("projects/nav-i-gee/assets/Koshi");
+
+// var ed=ee.Date(Date.now());
+// var eb=ed.advance(ee.Number(-35),'day')
+/////////////////////////////////////////////////////////////////////////////////////////
+//Here, in this code, some pixels were incorrectly classified as snow and ice 
+//those were merged with water to mask out water pixels.
+// similarly grass and crops were also merged together because some misclassification was noticed
+//Map.setOptions('SATELLITE');
+
+///////////////// Dynamic World ////////////////////////
+var dw = ee.ImageCollection('GOOGLE/DYNAMICWORLD/V1')
+           .filterDate('2023-03-01','2023-03-05')
+           .filterBounds(geometry);
+var img= ee.Image('GOOGLE/DYNAMICWORLD/V1/20230531T042711_20230531T043753_T46RCP');
+// Select label layer
+var classification = dw.select('label');
+var dwComposite = classification.reduce(ee.Reducer.mode());
+var water = dwComposite.eq(0);
+    
+////////////////////////////////masking//////////////////////////////
+water=water.selfMask().clip(geometry)
+var bandNames = dwComposite.bandNames();
+print('dwComposite Band names:', bandNames);
+  
+var mask = dwComposite.select('label_mode').eq(0);
+var nw = mask.updateMask(dwComposite).clip(geometry)
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+// Convert to coarse resolution vectors just to make it load faster.                            /////
+var vector1 = nw.reduceToVectors({                                                              /////
+  geometry: geometry,                                                                           /////
+  crs: water.projection(),                                                                      /////
+  scale: 250,
+  maxPixels: 1e13,                                                                              /////
+  geometryType: 'polygon',                                                                      /////
+  eightConnected: false, // it takes4connectedpixels if false                                   /////
+  labelProperty: 'zone',                                                                        /////
+  reducer: ee.Reducer.countEvery()                                                              /////
+});
+// 
+Map.addLayer(vector1, {color: 'FF0000'}, "Loading", true, 0.5);
+/////////////////////////////////////////////////////////////////////////////////////////////////////////  
+// Convert to vectors.
+var vector = nw.reduceToVectors({
+  geometry: geometry,
+  crs: water.projection(),
+  scale: 100,
+  maxPixels: 1e13,
+  geometryType: 'polygon',
+  eightConnected: false, // it takes4connectedpixels if false
+  labelProperty: 'zone',
+  reducer: ee.Reducer.countEvery()
+});
+    
+// Add area property to dissolved features(non water).
+var addArea = function(feature) {
+  return feature.set({area: feature.geometry().area(0.1).divide(10e6)});
+};
+var areaAdded = vector.map(addArea);
+///////////////FILTER AREA/////////////////////////////////////////////////////////////////////////////
+var Area = areaAdded.filter(ee.Filter.and(
+  ee.Filter.gte('area', 0.0001),
+  ee.Filter.lte('area', 3.5)
+));
+Map.addLayer(Area,{color: '0000FF'},"required islands having area in range 100sqm to 3.5sqkm")
+
+// Get a download URL for the FeatureCollection.
+var downloadUrl = Area.getDownloadURL({
+  format: 'KML',
+  filename: 'Kosi_Islands'
+});
+print('URL for downloading island FeatureCollection as KML', downloadUrl);
+
+var label= ui.Label('Download Islands') // call ui.Label constructor to get the actual label, and give it a caption, in this case is "Download"
+label.setUrl(downloadUrl);
+label.style().set({shown: true});
+Map.add(label)
+
+var grass = dwComposite.eq(2).clip(geometry);
+grass=grass.selfMask().clip(geometry)
+var fv= dwComposite.eq(3);
+fv=fv.selfMask().clip(geometry)
+var merge=ee.ImageCollection([grass,fv]).mosaic();
+Map.addLayer(merge,{bands:'label_mode', 
+  min: 0,
+  max: 1,
+  palette: ['#397D49',]
+},'grass+flooded vegetation')
+
+Map.addLayer(merge,{  min: 0,max: 1,color: '00FF00'},"Grass+Crop") //not a vector just an image.
+
+// Convert to vectors.
+var vectorG = merge.reduceToVectors({
+  geometry: Area,
+  crs: grass.projection(),
+  scale: 90,
+  maxPixels: 1e13,
+  geometryType: 'polygon',
+  eightConnected: false, // it takes4connectedpixels if false
+  labelProperty: 'zone',
+  reducer: ee.Reducer.countEvery()
+});
+Map.addLayer(vectorG,{color: '00FF00'},"Grass+crop vector")
+
+// Get a download URL for the FeatureCollection.
+var downloadUrl = vectorG.getDownloadURL({
+  format: 'KML',
+  filename: 'Kosi_grasslands'
+});
+print('URL for downloading grass FeatureCollection as KML', downloadUrl);
+
+var label= ui.Label('Download grasslands') // call ui.Label constructor to get the actual label, and give it a caption, in this case is "Download"
+label.setUrl(downloadUrl);
+label.style().set({shown: true});
+Map.add(label)
+
+// Export to Drive.
+Export.table.toDrive({
+  collection: vectorG,
+  description: 'grass+crop',
+  folder: 'missingvalues_hold',
+  fileFormat: 'SHP',
+  maxVertices: 1000000000
+});
+print('Number of features', vectorG.size());
+Map.setCenter(86.861, 26.4554,10)
+
+
