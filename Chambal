@@ -1,0 +1,164 @@
+var geometry = ee.FeatureCollection("projects/nav-i-gee/assets/Chambal");
+Map.setOptions('SATELLITE');
+Map.setCenter(78.9714, 26.6448,11)
+/////////////// S2 imagery ////////////////////////////
+var s2 = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')
+            .filterDate('2023-01-01', '2023-03-31')
+            .filterBounds(geometry)
+            .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 35));
+
+var s2Image = s2.median().clip(geometry)
+
+////////////////// Dynamic World ////////////////////////
+var dw = ee.ImageCollection('GOOGLE/DYNAMICWORLD/V1')
+             .filterDate('2023-02-01', '2023-02-10')
+             .filterBounds(geometry);
+
+// Select label layer
+var classification = dw.select('label');
+var dwComposite = classification.reduce(ee.Reducer.mode());
+print(typeof(dwComposite),"type of dwComposite")
+var water =dwComposite.eq(0).or(dwComposite.eq(8))
+// Map.addLayer(water, {}, 'water');
+
+////////////////////// Mapping and Visualiztion /////////////////////////
+var s2VisParams = {bands: ['B4', 'B3', 'B2'], min: 0, max: 3000};
+var dwVisParams = {bands:'label_mode', // Don't forget to choose the right band!
+  min: 0,
+  max: 8,
+  palette: ['#000000', '#419BDF', '#397D49', '#88B053', '#7A87C6',
+    '#E49635', '#DFC35A', '#C4281B', '#A59B8F', '#B39FE1']
+}; 
+
+
+//Map.centerObject(geometry, 11);
+Map.addLayer(s2Image, s2VisParams, 'Sentinel-2 Image');
+// Map.addLayer(dwComposite.clip(geometry), dwVisParams, 'Google Composite') 
+
+/////////////////////////////////////////WATER PIXELS ONLY/////////////////////////////////////////////////
+water=water.selfMask().clip(geometry)
+print(water)
+//Map.addLayer(water,{},'water')
+
+var bandNames = dwComposite.bandNames();
+print('dwComposite Band names:', bandNames);
+
+var mask = dwComposite.select('label_mode').eq(0);
+var nw = mask.updateMask(dwComposite).clip(geometry)
+print(nw,"nw")
+//Map.addLayer(nw, {}, 'nw');
+// Convert to coarse resolution vectors just to make it load faster.                            /////
+var vector1 = nw.reduceToVectors({                                                              /////
+  geometry: geometry,                                                                           /////
+  crs: water.projection(),                                                                      /////
+  scale: 250,
+  maxPixels: 1e13,                                                                              /////
+  geometryType: 'polygon',                                                                      /////
+  eightConnected: false, // it takes4connectedpixels if false                                   /////
+  labelProperty: 'zone',                                                                        /////
+  reducer: ee.Reducer.countEvery()                                                              /////
+});
+// 
+Map.addLayer(vector1, {color: 'FF0000'}, "Loading", true, 0.5);
+
+// Convert to vectors.
+var vector = nw.reduceToVectors({
+  geometry: geometry,
+  crs: water.projection(),
+  scale: 10,
+  maxPixels: 1e13,
+  geometryType: 'polygon',
+  eightConnected: false, // it takes4connectedpixels if false
+  labelProperty: 'zone',
+  reducer: ee.Reducer.countEvery()
+});
+
+
+// Add area property to dissolved features(non water).
+var addArea = function(feature) {
+  return feature.set({areaSqKm: feature.geometry().area(1).divide(10e6)});
+};
+var areaAdded = vector.map(addArea);
+
+// Print the first feature of the dissolved and area-added feature collection.
+print('First feature:', areaAdded.first());
+
+// Add the dissolved and area-added feature collection to the map.
+//Map.addLayer(areaAdded, {}, 'Dissolved and Area-Added Features');
+
+////////////////FILTER AREA/////////////////////////////////////////////////////////////////////////////
+// var Area = areaAdded.filter(ee.Filter.and(
+//   ee.Filter.gte('areaSqKm', 0.0005),
+//   ee.Filter.lte('areaSqKm', 5.0)
+// ));
+
+
+/////////////////////////// trying to confine the study area to islands//////////////////
+/////////////////////////// trying to confine the study area to islands//////////////////
+/////////////////////////// trying to confine the study area to islands//////////////////
+//var island_geometry= Area.geometry();
+
+var sand = dwComposite.eq(7).clip(geometry);
+sand=sand.selfMask().clip(geometry)
+Map.addLayer(sand,{bands:'label_mode', 
+  min: 0,
+  max: 1,
+  palette: ['#800000',]
+},'Land covered with Sand')
+
+//Map.addLayer(Area,{color:'4b0082'},"islands with area lt 3.5sqkm")
+// Convert to vectors.
+var vectorS = sand.reduceToVectors({
+  geometry: geometry,
+  crs: sand.projection(),
+  scale: 10,
+  maxPixels: 1e13,
+  geometryType: 'polygon',
+  eightConnected: false, // it takes4connectedpixels if false
+  labelProperty: 'zone',
+  reducer: ee.Reducer.countEvery()
+});
+Map.addLayer(vectorS,{color: 'cd853f'},"sand vector")
+
+
+
+// Get a download URL for the Island FeatureCollection.
+// var downloadUrl = Area.getDownloadURL({
+//   format: 'KML',
+//   filename: 'Islands'
+// });
+// print('URL for downloading FeatureCollection as KML', downloadUrl);
+
+// var label= ui.Label('Download islands') // call ui.Label constructor to get the actual label, and give it a caption, in this case is "Download"
+// label.setUrl(downloadUrl);
+// label.style().set({shown: true});
+// Map.add(label)
+
+// Get a download URL for the Island FeatureCollection.
+var downloadUrl = vectorS.getDownloadURL({
+  format: 'KML',
+  filename: 'Islands'
+});
+print('URL for downloading FeatureCollection as KML', downloadUrl);
+
+var label= ui.Label('Download sandy Area') // call ui.Label constructor to get the actual label, and give it a caption, in this case is "Download"
+label.setUrl(downloadUrl);
+label.style().set({shown: true});
+Map.add(label)
+
+
+// Export to Drive.
+Export.table.toDrive({
+  collection: vectorS,
+  description: 'sand',
+  folder: 'missingvalues_hold',
+  fileFormat: 'SHP',
+  maxVertices: 1000000000
+});
+print('Number of features', vectorS.size());
+
+// var sand_geo = vectorS.geometry();
+// var req = Area.map(function(f) {
+//   return f.intersection(sand_geo);
+// });
+// Map.addLayer(req,{color: '800080'},"REQUIRED")
