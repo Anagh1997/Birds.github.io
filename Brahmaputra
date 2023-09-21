@@ -6,7 +6,8 @@ var geometry = ee.FeatureCollection("projects/nav-i-gee/assets/Brahamaputra");
 //those were merged with water to mask out water pixels.
 // similarly grass and crops were also merged together because some misclassification was noticed
 //Map.setOptions('SATELLITE');
-
+var label= ui.Label('BRAHMPUTRA')//.style({width: '40px', height: '20px', fontSize: '15px', color: '484848'});
+Map.add(label)
 ///////////////// Dynamic World ////////////////////////
 var dw = ee.ImageCollection('GOOGLE/DYNAMICWORLD/V1')
            .filterDate('2023-03-01','2023-03-05')
