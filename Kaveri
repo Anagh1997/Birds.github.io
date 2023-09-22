@@ -1,3 +1,6 @@
+var Kaveri = ee.FeatureCollection("projects/nav-i-gee/assets/Kaveri");
+
+//the following comment is to export the feature collection(drawn geometry) to export to assests
 // Kaveri.geometry()
 // Export.table.toAsset({
 //   collection: Kaveri,
